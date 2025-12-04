@@ -39,6 +39,7 @@
 
 #ifdef XMRIG_FEATURE_HTTP
 #   include "base/net/stratum/DaemonClient.h"
+#   include "base/net/stratum/JunoDaemonClient.h"
 #   include "base/net/stratum/SelfSelectClient.h"
 #endif
 
@@ -147,7 +148,13 @@ xmrig::Pool::Pool(const rapidjson::Value &object) :
         m_submitToOrigin = Json::getBool(object, kSubmitToOrigin, m_submitToOrigin);
     }
     else if (Json::getBool(object, kDaemon)) {
-        m_mode = MODE_DAEMON;
+        // Use JunoDaemonClient for Juno Cash (different JSON-RPC protocol)
+        if (m_coin == Coin::JUNO) {
+            m_mode = MODE_JUNO_DAEMON;
+        }
+        else {
+            m_mode = MODE_DAEMON;
+        }
     }
 }
 
@@ -186,7 +193,7 @@ bool xmrig::Pool::isEnabled() const
 #   endif
 
 #   ifndef XMRIG_FEATURE_HTTP
-    if (m_mode == MODE_DAEMON) {
+    if (m_mode == MODE_DAEMON || m_mode == MODE_JUNO_DAEMON) {
         return false;
     }
 #   endif
@@ -241,6 +248,9 @@ xmrig::IClient *xmrig::Pool::createClient(int id, IClientListener *listener) con
     else if (m_mode == MODE_DAEMON) {
         client = new DaemonClient(id, listener);
     }
+    else if (m_mode == MODE_JUNO_DAEMON) {
+        client = new JunoDaemonClient(id, listener);
+    }
     else if (m_mode == MODE_SELF_SELECT) {
         client = new SelfSelectClient(id, Platform::userAgent(), listener, m_submitToOrigin);
     }
@@ -283,7 +293,7 @@ rapidjson::Value xmrig::Pool::toJSON(rapidjson::Document &doc) const
         obj.AddMember(StringRef(kSpendSecretKey), m_spendSecretKey.toJSON(), allocator);
     }
 
-    if (m_mode != MODE_DAEMON) {
+    if (m_mode != MODE_DAEMON && m_mode != MODE_JUNO_DAEMON) {
         obj.AddMember(StringRef(kPass),  m_password.toJSON(), allocator);
         obj.AddMember(StringRef(kRigId), m_rigId.toJSON(), allocator);
 
@@ -303,13 +313,15 @@ rapidjson::Value xmrig::Pool::toJSON(rapidjson::Document &doc) const
     obj.AddMember(StringRef(kTls),          isTLS(), allocator);
     obj.AddMember(StringRef(kSni),          isSNI(), allocator);
     obj.AddMember(StringRef(kFingerprint),  m_fingerprint.toJSON(), allocator);
-    obj.AddMember(StringRef(kDaemon),       m_mode == MODE_DAEMON, allocator);
+    obj.AddMember(StringRef(kDaemon),       m_mode == MODE_DAEMON || m_mode == MODE_JUNO_DAEMON, allocator);
     obj.AddMember(StringRef(kSOCKS5),       m_proxy.toJSON(doc), allocator);
 
-    if (m_mode == MODE_DAEMON) {
+    if (m_mode == MODE_DAEMON || m_mode == MODE_JUNO_DAEMON) {
         obj.AddMember(StringRef(kDaemonPollInterval), m_pollInterval, allocator);
         obj.AddMember(StringRef(kDaemonJobTimeout), m_jobTimeout, allocator);
-        obj.AddMember(StringRef(kDaemonZMQPort), m_zmqPort, allocator);
+        if (m_mode == MODE_DAEMON) {
+            obj.AddMember(StringRef(kDaemonZMQPort), m_zmqPort, allocator);
+        }
     }
     else {
         obj.AddMember(StringRef(kSelfSelect),     m_daemon.url().toJSON(), allocator);
